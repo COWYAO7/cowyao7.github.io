@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>幸运抽奖</title>
     <style>
+        /* 前面的样式保持不变 */
         body {
             margin: 0;
             min-height: 100vh;
@@ -123,6 +124,14 @@
             font-size: 0.9rem;
             color: #666;
         }
+
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
     </style>
 </head>
 <body>
@@ -134,7 +143,6 @@
             <div id="qrUrl"></div>
         </div>
 
-        <!-- 注册表单 - 这个表单会被转换成二维码 -->
         <div class="registration-form" id="registrationForm">
             <h3>参与抽奖登记</h3>
             <input type="text" class="form-input" id="name" placeholder="请输入姓名" required>
@@ -146,27 +154,48 @@
         <button id="stopDraw" class="button stop" disabled>停止抽奖</button>
 
         <div class="participants">
-            <h3>参与者名单</h3>
+            <h3>参与者名单 (<span id="participantCount">0</span>人)</h3>
             <div id="participantsList"></div>
         </div>
 
         <div id="result" class="result"></div>
+        <div id="status" class="status" style="display: none;"></div>
     </div>
 
     <!-- 引入 QR Code 库 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+
     <script>
-        // 存储参与者
-        let participants = [];
+        // Firebase 配置 - 需要替换为你的配置
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_AUTH_DOMAIN",
+            databaseURL: "YOUR_DATABASE_URL",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_STORAGE_BUCKET",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        // 初始化 Firebase
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+        
+        // 生成抽奖ID（使用时间戳，这样每次部署都是新的抽奖）
+        const drawId = 'draw_' + Date.now();
+        const drawRef = database.ref(drawId);
+
         let isCollecting = true;
         let isDrawing = false;
         let drawInterval;
+        let participants = [];
 
-        // 生成当前页面的URL作为二维码内容
-        const currentUrl = window.location.href;
-        
         // 生成二维码
+        const currentUrl = window.location.href;
         new QRCode(document.getElementById("qrDisplay"), {
             text: currentUrl,
             width: 200,
@@ -175,9 +204,26 @@
             colorLight : "#ffffff",
             correctLevel : QRCode.CorrectLevel.H
         });
-
-        // 显示URL
         document.getElementById("qrUrl").textContent = currentUrl;
+
+        // 监听参与者数据变化
+        drawRef.child('participants').on('value', (snapshot) => {
+            const data = snapshot.val() || {};
+            participants = Object.values(data);
+            updateParticipantsList();
+        });
+
+        // 监听抽奖状态变化
+        drawRef.child('status').on('value', (snapshot) => {
+            const status = snapshot.val() || { isCollecting: true };
+            isCollecting = status.isCollecting;
+            
+            if (!isCollecting) {
+                document.getElementById('stopCollection').disabled = true;
+                document.getElementById('startDraw').disabled = false;
+                document.getElementById('registrationForm').style.display = 'none';
+            }
+        });
 
         // 提交注册
         function submitRegistration() {
@@ -190,10 +236,10 @@
             const name = nameInput.value.trim();
             
             if (name) {
-                participants.push(name);
-                updateParticipantsList();
+                // 将新参与者添加到 Firebase
+                drawRef.child('participants').push(name);
                 nameInput.value = '';
-                alert('登记成功！');
+                showStatus('登记成功！');
             } else {
                 alert('请输入姓名！');
             }
@@ -203,15 +249,23 @@
         function updateParticipantsList() {
             const list = document.getElementById('participantsList');
             list.innerHTML = participants.join(', ');
+            document.getElementById('participantCount').textContent = participants.length;
+        }
+
+        // 显示状态消息
+        function showStatus(message) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.style.display = 'block';
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 3000);
         }
 
         // 停止收集按钮
         document.getElementById('stopCollection').addEventListener('click', function() {
-            isCollecting = false;
-            this.disabled = true;
-            document.getElementById('startDraw').disabled = false;
-            document.getElementById('registrationForm').style.display = 'none';
-            alert('已停止收集新参与者！');
+            drawRef.child('status').set({ isCollecting: false });
+            showStatus('已停止收集新参与者！');
         });
 
         // 开始抽奖按钮
@@ -244,6 +298,12 @@
             const winnerIndex = Math.floor(Math.random() * participants.length);
             const winner = participants[winnerIndex];
             document.getElementById('result').textContent = `🎉 恭喜 ${winner} 中奖！ 🎉`;
+            
+            // 记录中奖结果
+            drawRef.child('winners').push({
+                name: winner,
+                timestamp: Date.now()
+            });
         });
     </script>
 </body>
